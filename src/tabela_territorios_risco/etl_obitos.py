@@ -35,9 +35,9 @@ def rodar_etl_obitos():
     print("[ETL Óbitos] Iniciando processamento e unificação das bases...")
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    caminho_1 = os.path.join(base_dir, "../data/obitos_1.csv")
-    caminho_2 = os.path.join(base_dir, "../data/obitos_2.csv")
-    caminho_3 = os.path.join(base_dir, "../data/obitos_3.csv")
+    caminho_1 = os.path.join(base_dir, "../../data/territorios/obitos_1.csv")
+    caminho_2 = os.path.join(base_dir, "../../data/territorios/obitos_2.csv")
+    caminho_3 = os.path.join(base_dir, "../../data/territorios/obitos_3.csv")
     
     for caminho in [caminho_1, caminho_2, caminho_3]:
         if not os.path.exists(caminho):

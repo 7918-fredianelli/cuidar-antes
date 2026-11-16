@@ -10,7 +10,7 @@ def processar_erosivos():
     print("[ETL Erosivos] Iniciando processamento da base...")
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    caminho_arquivo = os.path.join(base_dir, "../data/erosivos.csv")
+    caminho_arquivo = os.path.join(base_dir, "../../data/territorios/erosivos.csv")
     
     if not os.path.exists(caminho_arquivo):
         raise FileNotFoundError(f"Arquivo não encontrado: {caminho_arquivo}")
