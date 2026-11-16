@@ -3,6 +3,10 @@ import pandas as pd
 import numpy as np
 
 def processar_alagamentos():
+    """
+    Processa a base de alagamentos seguindo o contrato padrão de saída:
+    [nome_cidade, uf, total_alagamentos]
+    """
     print("[ETL Alagamentos] Iniciando processamento da base...")
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +31,7 @@ def processar_alagamentos():
     df_final['nome_cidade'] = extracao[0].str.strip().str.title()
     df_final['uf'] = extracao[1].str.strip().str.upper()
     
-    # Identifica a coluna de valor (geralmente a col_2 ou a última coluna com os dados numéricos/-)
+    # Identifica a coluna de valor
     col_valor = 'col_2' if 'col_2' in df.columns else df.columns[-1]
     
     # Limpa valores numéricos (substitui traços '-', vírgulas e nulos por 0)
@@ -35,17 +39,17 @@ def processar_alagamentos():
     df_final['total_alagamentos'] = df_final['total_alagamentos'].str.replace(',', '.', regex=False)
     df_final['total_alagamentos'] = pd.to_numeric(df_final['total_alagamentos'], errors='coerce').fillna(0)
     
-    # Remove eventuais linhas nulas
+    # Remove eventuais linhas nulas e garante unicidade por município/UF
     df_final = df_final.dropna(subset=['nome_cidade', 'uf'])
+    df_final = df_final.groupby(['nome_cidade', 'uf'], as_index=False)['total_alagamentos'].sum()
     
     print(f"[ETL Alagamentos] Sucesso! {len(df_final)} municípios processados.")
     return df_final
 
 if __name__ == "__main__":
     df_resultado = processar_alagamentos()
-    
     print("\n" + "="*50)
-    print("🔍 TESTE VISUAL: ALAGAMENTOS (PRIMEIRAS 10 CIDADES)")
+    print("🔍 TESTE VISUAL: ALAGAMENTOS")
     print("="*50)
     print(df_resultado.head(10).to_string(index=False))
     print("="*50)
