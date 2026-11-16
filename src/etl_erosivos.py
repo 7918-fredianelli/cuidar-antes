@@ -3,6 +3,10 @@ import pandas as pd
 import numpy as np
 
 def processar_erosivos():
+    """
+    Processa a base de processos erosivos seguindo o contrato padrão de saída:
+    [nome_cidade, uf, total_processos_erosivos]
+    """
     print("[ETL Erosivos] Iniciando processamento da base...")
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -35,17 +39,17 @@ def processar_erosivos():
     df_final['total_processos_erosivos'] = df_final['total_processos_erosivos'].str.replace(',', '.', regex=False)
     df_final['total_processos_erosivos'] = pd.to_numeric(df_final['total_processos_erosivos'], errors='coerce').fillna(0)
     
-    # Remove eventuais linhas nulas
+    # Remove eventuais linhas nulas e garante unicidade por município/UF
     df_final = df_final.dropna(subset=['nome_cidade', 'uf'])
+    df_final = df_final.groupby(['nome_cidade', 'uf'], as_index=False)['total_processos_erosivos'].sum()
     
     print(f"[ETL Erosivos] Sucesso! {len(df_final)} municípios processados.")
     return df_final
 
 if __name__ == "__main__":
     df_resultado = processar_erosivos()
-    
     print("\n" + "="*50)
-    print("🔍 TESTE VISUAL: PROCESSOS EROSIVOS (PRIMEIRAS 10 CIDADES)")
+    print("🔍 TESTE VISUAL: PROCESSOS EROSIVOS")
     print("="*50)
     print(df_resultado.head(10).to_string(index=False))
     print("="*50)
