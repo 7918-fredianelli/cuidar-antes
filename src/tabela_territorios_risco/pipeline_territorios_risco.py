@@ -33,8 +33,8 @@ def executar_etl_master():
     print("="*90)
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = os.path.join(base_dir, "../output")
-    sql_dir = os.path.join(base_dir, "../sql")
+    output_dir = os.path.join(base_dir, "../../output")
+    sql_dir = os.path.join(base_dir, "../../sql")
     
     os.makedirs(sql_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
