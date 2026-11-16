@@ -2,15 +2,15 @@ import os
 import unicodedata
 import pandas as pd
 
-# Importação dos módulos ETL limpos e padronizados
+# Importação local dos módulos ETL da mesma pasta
 try:
-    from src import etl_territorios
-    from src import etl_alagamentos
-    from src import etl_erosivos
-    from src import etl_desabrigados
-    from src import etl_obitos
-    from src import etl_sem_internet
-    from src import etl_dificil_acesso
+    from . import etl_territorios
+    from . import etl_alagamentos
+    from . import etl_erosivos
+    from . import etl_desabrigados
+    from . import etl_obitos
+    from . import etl_sem_internet
+    from . import etl_dificil_acesso
 except ImportError:
     import etl_territorios
     import etl_alagamentos
@@ -27,11 +27,14 @@ def limpar_texto(texto):
     nfkd = unicodedata.normalize('NFKD', str(texto))
     return "".join([c for c in nfkd if not unicodedata.combining(c)]).strip().lower()
 
-def executar_etl_master():
+def executar_etl_master(ufs_desejadas=None):
     print("="*90)
     print("🚀 [ETL Master - FIAP Compliance] Pipeline com Tipologia Completa de Desastres Naturais")
     print("="*90)
     
+    if ufs_desejadas is None:
+        ufs_desejadas = ["RO"]
+        
     base_dir = os.path.dirname(os.path.abspath(__file__))
     output_dir = os.path.join(base_dir, "../../output")
     sql_dir = os.path.join(base_dir, "../../sql")
@@ -50,11 +53,11 @@ def executar_etl_master():
         df_dificil_acesso = etl_dificil_acesso.processar_dificil_acesso()
     except Exception as e:
         print(f"❌ Erro na execução dos ETLs: {e}")
-        return
+        return pd.DataFrame()
 
     if df_territorios.empty:
         print("❌ Erro: A base de territórios está vazia.")
-        return
+        return pd.DataFrame()
 
     # 2. Prepara a base mestre (Territórios)
     df_base = df_territorios.copy()
@@ -62,16 +65,15 @@ def executar_etl_master():
     df_base['uf'] = df_base['uf'].astype(str).str.strip().str.upper()
     df_base['cd_ibge_municipio'] = pd.to_numeric(df_base['codigo_cidade'], errors='coerce')
 
-    # Defina o estado de escopo desejado
-    UF_ESCOPO = "RO" 
-    df_filtrado = df_base[df_base['uf'] == UF_ESCOPO].copy()
+    # Filtra pelas UFs fornecidas pelo usuário
+    df_filtrado = df_base[df_base['uf'].isin(ufs_desejadas)].copy()
 
     # Cria chaves canônicas de cruzamento
     df_filtrado['chave_mun'] = df_filtrado['nome_cidade'].apply(limpar_texto)
     df_filtrado['chave_uf'] = df_filtrado['uf'].apply(limpar_texto)
     df_filtrado = df_filtrado.drop_duplicates(subset=['chave_mun', 'chave_uf'])
 
-    # 3. Função padrão de merge aproveitando o contrato limpo dos módulos
+    # 3. Função padrão de merge
     def aplicar_merge(df_principal, df_aux, col_metrica):
         if df_aux.empty:
             df_principal[col_metrica] = 0
@@ -88,7 +90,7 @@ def executar_etl_master():
         merged[col_metrica] = merged[col_metrica].fillna(0)
         return merged
 
-    # 4. Aplica o cruzamento em cadeia para todas as métricas
+    # 4. Aplica o cruzamento em cadeia
     df_merged = df_filtrado.copy()
     df_merged = aplicar_merge(df_merged, df_alagamentos, 'total_alagamentos')
     df_merged = aplicar_merge(df_merged, df_erosivos, 'total_processos_erosivos')
@@ -102,7 +104,7 @@ def executar_etl_master():
     id_setor_seq = 1
     auditoria_dados = []
 
-    # 5. Aplicação da Regra de Pontuação, Risco e Tipologia Dinâmica
+    # 5. Aplicação da Regra de Pontuação e Risco
     for _, row in df_merged.iterrows():
         cd_ibge = row['cd_ibge_municipio']
         nome_mun = row['nome_cidade']
@@ -119,34 +121,26 @@ def executar_etl_master():
             continue
 
         score = 0
-
-        # Alagamentos
         if alag == 1: score += 1
         elif alag > 1: score += 2
 
-        # Desabrigados
         if desab == 1: score += 5
         elif desab > 1: score += 7
 
-        # Erosivos
         if eros == 1: score += 1
         elif eros > 1: score += 2
 
-        # Óbitos
         if obitos == 1: score += 5
         elif obitos > 1: score += 7
 
         pontos_outras_ameacas = score
 
-        # Sem Internet
         if net > 0 and pontos_outras_ameacas > 0:
             score += 2
 
-        # Difícil Acesso
         if dacesso > 10 and pontos_outras_ameacas > 0:
             score += 4
 
-        # Faixas de Risco e Status
         if score > 15:
             grau_risco, status_setor = 'MUITO_ALTO', 'ALERTA_EVACUACAO'
         elif 10 <= score <= 15:
@@ -156,8 +150,6 @@ def executar_etl_master():
         else:
             grau_risco, status_setor = 'BAIXO', 'NORMAL'
 
-        # --- VARIABILIDADE INTELIGENTE DE AMEAÇA E COTA TOPOGRÁFICA ---
-        # Distribui com base nas métricas e no ID para enriquecer as restrições da tabela
         if alag > eros and alag > 0:
             tipo_ameaca = 'INUNDACAO'
             cota_topografica = 12.00
@@ -165,7 +157,6 @@ def executar_etl_master():
             tipo_ameaca = 'ENXURRADA'
             cota_topografica = 45.00
         else:
-            # Alternância baseada no resto da divisão do ID para garantir diversidade analítica
             if id_setor_seq % 3 == 0:
                 tipo_ameaca = 'INUNDACAO'
                 cota_topografica = 12.00
@@ -204,7 +195,6 @@ def executar_etl_master():
         id_setor_seq += 1
         registros_gerados += 1
 
-    # Exibe relatório de auditoria no console
     df_aud = pd.DataFrame(auditoria_dados)
     print("\n" + "="*85)
     print("🔍 RELATÓRIO DE AUDITORIA DO CÁLCULO E TIPOLOGIAS (AMOSTRA)")
@@ -212,13 +202,14 @@ def executar_etl_master():
     print(df_aud.head(15).to_string(index=False))
     print("="*85 + "\n")
 
-    # 6. Geração do SQL compatível com Oracle (Comandos INSERT individuais por linha)
+    # 6. Geração do SQL
     df_final = pd.DataFrame(dados_consolidados)
     caminho_sql = os.path.join(sql_dir, "insert_TB_TERRITORIO_SETOR_RISCO.sql")
 
+    ufs_str_label = ", ".join(ufs_desejadas)
     with open(caminho_sql, 'w', encoding='utf-8') as f:
         f.write("-- Script SQL gerado automaticamente pelo ETL Master (Compatível com Oracle SQL 11g/12c/19c)\n")
-        f.write(f"-- Tabela: TB_TERRITORIO_SETOR_RISCO | UF: {UF_ESCOPO} | Total: {len(df_final)} registros\n\n")
+        f.write(f"-- Tabela: TB_TERRITORIO_SETOR_RISCO | UF(s): {ufs_str_label} | Total: {len(df_final)} registros\n\n")
         
         for _, row in df_final.iterrows():
             colunas = list(row.index)
@@ -242,4 +233,4 @@ def executar_etl_master():
     return df_final
 
 if __name__ == "__main__":
-    executar_etl_master()
+    executar_etl_master(["RO"])
