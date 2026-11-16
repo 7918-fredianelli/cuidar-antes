@@ -1,0 +1,14 @@
+# Ambientes virtuais
+venv/
+env/
+__pycache__/
+
+# Dados locais (o Git não deve rastrear os CSVs brutos ou sensíveis)
+data/
+
+# Arquivos gerados de saída (opcional, se preferir gerar o SQL localmente)
+sql/*.sql
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
