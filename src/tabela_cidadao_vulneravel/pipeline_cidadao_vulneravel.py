@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import unicodedata
 import pandas as pd
 import numpy as np
@@ -59,7 +60,7 @@ def gerar_telefone_ficticio():
 
 def executar_pipeline_cidadao(ids_filtrados=None):
     print("="*95)
-    print("🚀 [Pipeline Cidadão Vulnerável] Executando com Ordenação Crescente por ID de Setor")
+    print("🚀 [Pipeline Cidadão Vulnerável] Executando com Prevenção de Conflito de Colunas")
     print("="*95)
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -70,16 +71,19 @@ def executar_pipeline_cidadao(ids_filtrados=None):
     df_idade = etl_idade_genero.rodar_etl_idade_genero()
     df_def = etl_deficiencia.processar_deficiencia()
     
-    # Cria chaves canônicas nas bases demográficas para unificação perfeita
+    # Padronização e criação segura das chaves canônicas em df_idade
     if not df_idade.empty:
-        df_idade['chave_mun'] = df_idade['nome_cidade'].apply(limpar_texto)
+        col_mun_idade = 'nome_cidade' if 'nome_cidade' in df_idade.columns else 'nome_municipio'
+        df_idade['chave_mun'] = df_idade[col_mun_idade].apply(limpar_texto)
         df_idade['chave_uf'] = df_idade['uf'].apply(limpar_texto)
         
+    # Padronização e criação segura das chaves canônicas em df_def
     if not df_def.empty:
-        df_def['chave_mun'] = df_def['nome_cidade'].apply(limpar_texto)
+        col_mun_def = 'nome_cidade' if 'nome_cidade' in df_def.columns else 'nome_municipio'
+        df_def['chave_mun'] = df_def[col_mun_def].apply(limpar_texto)
         df_def['chave_uf'] = df_def['uf'].apply(limpar_texto)
     
-    # 2. Lê o arquivo SQL de riscos gerado na Etapa 1
+    # 2. Lê o arquivo SQL de riscos gerado na Etapa 1 com parser robusto
     caminho_sql_risco = os.path.join(sql_dir, "insert_TB_TERRITORIO_SETOR_RISCO.sql")
     
     if not os.path.exists(caminho_sql_risco):
@@ -91,10 +95,17 @@ def executar_pipeline_cidadao(ids_filtrados=None):
         for linha in f:
             if "INSERT INTO TB_TERRITORIO_SETOR_RISCO" in linha:
                 try:
-                    partes = linha.split("VALUES (")[1].rstrip(");\n").split(", ")
+                    match_valores = re.search(r"VALUES \((.*?)\);", linha)
+                    if not match_valores:
+                        continue
+                    
+                    conteudo_valores = match_valores.group(1)
+                    partes = [p.strip() for p in re.split(r",(?=(?:[^']*'[^']*')*[^']*$)", conteudo_valores)]
+                    
                     id_setor = int(partes[0])
                     nome_mun = partes[2].strip("'").replace("''", "'")
                     sigla_uf = partes[3].strip("'")
+                    
                     setores_dados.append({
                         'id_setor': id_setor,
                         'nome_cidade': nome_mun,
@@ -110,30 +121,39 @@ def executar_pipeline_cidadao(ids_filtrados=None):
         print("❌ Erro: Nenhum setor encontrado no arquivo SQL de riscos.")
         return pd.DataFrame()
 
-    # Aplica o filtro de IDs selecionados pelo usuário no main.py, se houver
+    # Restringe estritamente para processar apenas um único ID por vez
     if ids_filtrados:
-        ids_filtrados_int = [int(i) for i in ids_filtrados if str(i).isdigit()]
-        df_setores = df_setores[df_setores['id_setor'].isin(ids_filtrados_int)]
+        primeiro_id = str(ids_filtrados[0]).strip()
+        if primeiro_id.isdigit():
+            df_setores = df_setores[df_setores['id_setor'] == int(primeiro_id)]
 
     if df_setores.empty:
-        print("⚠️ Nenhum setor corresponde aos IDs filtrados.")
+        print("⚠️ Nenhum setor corresponde ao ID informado.")
         return pd.DataFrame()
 
-    # 3. Cruzamento estrito utilizando as chaves canônicas
-    df_merged = pd.merge(df_setores, df_idade, on=['chave_mun', 'chave_uf'], how='inner')
+    # 3. Cruzamento estrito selecionando apenas as colunas métricas de idade (evita colisão _x / _y)
+    colunas_para_trazer_idade = ['chave_mun', 'chave_uf'] + [c for c in df_idade.columns if c not in ['nome_cidade', 'nome_municipio', 'uf', 'chave_mun', 'chave_uf']]
+    df_merged = pd.merge(df_setores, df_idade[colunas_para_trazer_idade], on=['chave_mun', 'chave_uf'], how='inner')
     
+    # Se o merge exato vier vazio, tenta flexibilizar apenas pela chave do município
+    if df_merged.empty and not df_idade.empty:
+        print("⚠️ [AVISO] Cruzamento exato por Município+UF retornou vazio. Tentando cruzamento flexível por Nome do Município...")
+        colunas_flex_idade = ['chave_mun'] + [c for c in df_idade.columns if c not in ['nome_cidade', 'nome_municipio', 'uf', 'chave_mun', 'chave_uf']]
+        df_merged = pd.merge(df_setores, df_idade[colunas_flex_idade].drop_duplicates(subset=['chave_mun']), on=['chave_mun'], how='inner')
+
     # Merge seguro para deficiência
     if not df_def.empty and 'total_deficientes' in df_def.columns:
-        df_merged = pd.merge(df_merged, df_def[['chave_mun', 'chave_uf', 'total_deficientes']], on=['chave_mun', 'chave_uf'], how='left')
+        colunas_deficiencia = ['chave_mun', 'total_deficientes', 'total_mulheres'] if 'total_mulheres' in df_def.columns else ['chave_mun', 'total_deficientes']
+        df_merged = pd.merge(df_merged, df_def[colunas_deficiencia].drop_duplicates(subset=['chave_mun']), on=['chave_mun'], how='left', suffixes=('', '_def'))
         df_merged['total_deficientes'] = df_merged['total_deficientes'].fillna(0).astype(int)
     else:
         df_merged['total_deficientes'] = 0
 
-    # Verificação e tratamento seguro para contagem de mulheres
+    # Tratamento seguro para contagem de mulheres
     if 'total_mulheres' in df_merged.columns:
         df_merged['total_mulheres'] = df_merged['total_mulheres'].fillna(0).astype(int)
-    elif 'mulheres' in df_merged.columns:
-        df_merged['total_mulheres'] = df_merged['mulheres'].fillna(0).astype(int)
+    elif 'total_mulheres_def' in df_merged.columns:
+        df_merged['total_mulheres'] = df_merged['total_mulheres_def'].fillna(0).astype(int)
     else:
         df_merged['total_mulheres'] = 50
 
@@ -141,11 +161,10 @@ def executar_pipeline_cidadao(ids_filtrados=None):
     id_cidadao_seq = 1
     auditoria_populacao = []
 
-    print("\n🔄 Distribuindo vulnerabilidades de mobilidade de forma balanceada por setor...")
+    print("\n🔄 Distribuindo vulnerabilidades de mobilidade de forma balanceada para o setor selecionado...")
 
-    # Se o merge estiver vazio, ativa o preenchimento de fallback
     if df_merged.empty:
-        print("⚠️ [AVISO] Merge vazio detectado. Ativando preenchimento automático de fallback...")
+        print("⚠️ [AVISO] Merge indisponível. Ativando preenchimento automático de fallback estrutural...")
         df_alvo = df_setores.copy()
         modo_fallback = True
     else:
@@ -155,7 +174,7 @@ def executar_pipeline_cidadao(ids_filtrados=None):
     for _, row in df_alvo.iterrows():
         id_setor = int(row['id_setor'])
         nome_mun = row['nome_cidade']
-        uf = row['uf']
+        uf = row['uf'] if 'uf' in row else 'SP'
         
         if modo_fallback:
             populacao_total = 350
@@ -228,7 +247,6 @@ def executar_pipeline_cidadao(ids_filtrados=None):
             'Sem Restrição': atribuicoes.count('SEM_RESTRICAO')
         })
 
-    # Converte para DataFrame
     df_final = pd.DataFrame(registros_cidadao)
 
     # -------------------------------------------------------------
@@ -260,17 +278,14 @@ def executar_pipeline_cidadao(ids_filtrados=None):
             
         df_final = pd.concat([df_final, pd.DataFrame(novos_registros)], ignore_index=True)
 
-    # -------------------------------------------------------------
-    # ORDENAÇÃO CRESCENTE POR ID_SETOR (E ID_CIDADÃO)
-    # -------------------------------------------------------------
     df_final = df_final.sort_values(by=['id_setor', 'id_cidadao'], ascending=[True, True]).reset_index(drop=True)
 
     if auditoria_populacao:
         df_aud = pd.DataFrame(auditoria_populacao)
         print("\n" + "="*95)
-        print("🔍 AUDITORIA DA DISTRIBUIÇÃO POR SETORES E VULNERABILIDADES")
+        print("🔍 AUDITORIA DA DISTRIBUIÇÃO POR SETOR SELECIONADO")
         print("="*95)
-        print(df_aud.head(10).to_string(index=False))
+        print(df_aud.to_string(index=False))
         print(f"... Total consolidado de cidadãos gerados: {len(df_final)}")
         print("="*95 + "\n")
 
@@ -281,7 +296,7 @@ def executar_pipeline_cidadao(ids_filtrados=None):
     
     with open(caminho_sql, 'w', encoding='utf-8') as f:
         f.write("-- Script SQL gerado automaticamente pelo Pipeline Cidadão (Compatível com Oracle SQL 11g/12c/19c)\n")
-        f.write(f"-- Tabela: TB_CIDADAO_VULNERAVEL | Total de Registros: {len(df_final)} | Ordenado por ID_SETOR CRESCENTE\n\n")
+        f.write(f"-- Tabela: TB_CIDADAO_VULNERAVEL | Total de Registros: {len(df_final)} | Setor Processado Individualmente\n\n")
         
         for _, row in df_final.iterrows():
             colunas = list(row.index)
@@ -299,7 +314,7 @@ def executar_pipeline_cidadao(ids_filtrados=None):
             valores_str = ", ".join(valores)
             f.write(f"INSERT INTO TB_CIDADAO_VULNERAVEL ({colunas_str}) VALUES ({valores_str});\n")
 
-    print(f"✅ Sucesso! Arquivo SQL gerado em: {caminho_sql} com {len(df_final)} registros ordenados.")
+    print(f"✅ Sucesso! Arquivo SQL gerado em: {caminho_sql} com {len(df_final)} registros.")
     return df_final
 
 if __name__ == "__main__":

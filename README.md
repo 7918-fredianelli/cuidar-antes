@@ -39,6 +39,7 @@ Cuidar Antes/
         ├── pipeline_cidadao_vulneravel.py
         ├── etl_idade_genero.py
         └── etl_deficiencia.py
+        
 ⚙️ Regras de Negócio e Engenharia de Dados
 Classificação de Riscos (TB_TERRITORIO_SETOR_RISCO):
 
