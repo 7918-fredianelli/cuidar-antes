@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import pandas as pd
 
@@ -29,7 +30,6 @@ def executar_orquestrador():
     print("\n[Passo 1/2] Carga de Territórios de Risco (IBGE)")
     entrada_ufs = input("👉 Digite as UFs desejadas (ex: SP,RJ) [Padrão: SP]: ").strip()
     
-    # Fallback automático se o usuário apenas apertar ENTER
     if not entrada_ufs:
         ufs_desejadas = ["SP"]
         print("   -> Nenhuma UF informada. Aplicando padrão: SP")
@@ -55,7 +55,7 @@ def executar_orquestrador():
     print("\n" + "-"*65)
     print("[Passo 2/2] Carga de Cidadãos Vulneráveis (Pessoas Protegidas)")
     
-    # Lê os setores gerados no Passo 1 para exibir na tela
+    # Lê os setores gerados no Passo 1 com parser regex robusto
     caminho_sql_risco = os.path.join(sql_dir, "insert_TB_TERRITORIO_SETOR_RISCO.sql")
     setores_disponiveis = []
     
@@ -64,7 +64,12 @@ def executar_orquestrador():
             for linha in f:
                 if "INSERT INTO TB_TERRITORIO_SETOR_RISCO" in linha:
                     try:
-                        partes = linha.split("VALUES (")[1].rstrip(");\n").split(", ")
+                        match_valores = re.search(r"VALUES \((.*?)\);", linha)
+                        if not match_valores:
+                            continue
+                        conteudo_valores = match_valores.group(1)
+                        partes = [p.strip() for p in re.split(r",(?=(?:[^']*'[^']*')*[^']*$)", conteudo_valores)]
+                        
                         id_s = partes[0]
                         mun = partes[2].strip("'").replace("''", "'")
                         uf_s = partes[3].strip("'")
@@ -72,7 +77,7 @@ def executar_orquestrador():
                     except Exception:
                         continue
 
-    # Exibe até 3 sugestões de IDs e cidades disponíveis para guiar o usuário
+    # Exibe sugestões de setores disponíveis para guiar o usuário
     if setores_disponiveis:
         print("\n💡 Sugestões de Setores Disponíveis:")
         for id_s, mun, uf_s in setores_disponiveis[:3]:
@@ -81,18 +86,21 @@ def executar_orquestrador():
             print(f"   ... e mais {len(setores_disponiveis) - 3} setor(es) gerado(s).")
         print()
 
-    entrada_ids = input("👉 Digite o ID do Setor [ou ENTER para distribuir em todos]: ").strip()
+    entrada_id = input("👉 Digite um ÚNICO ID de Setor por vez (ex: 535) [ou ENTER para pegar o primeiro]: ").strip()
     
-    # Fallback: Se der ENTER, distribui automaticamente em todos os setores gerados
-    if not entrada_ids:
-        ids_filtrados = [s[0] for s in setores_disponiveis]
-        print("   -> ENTER pressionado: Distribuindo cidadãos em todos os setores gerados.")
+    # Se der ENTER ou valor inválido, assume o primeiro ID disponível
+    if not entrada_id or not entrada_id.isdigit():
+        if setores_disponiveis:
+            ids_filtrados = [setores_disponiveis[0][0]]
+            print(f"   -> Nenhum ID válido informado. Utilizando o primeiro setor disponível (ID: {ids_filtrados[0]}).")
+        else:
+            ids_filtrados = ["1"]
     else:
-        ids_filtrados = [i.strip() for i in entrada_ids.split(",")]
-        print(f"   -> Setor(es) selecionado(s) para processamento: {ids_filtrados}")
+        ids_filtrados = [entrada_id]
+        print(f"   -> Setor selecionado para processamento: ID {entrada_id}")
         
     try:
-        print("\n🎲 Gerando cidadãos sintéticos vinculados aos setores...")
+        print("\n🎲 Gerando cidadãos sintéticos vinculados ao setor selecionado...")
         executar_cidadao(ids_filtrados)
         print(f"✅ Arquivos SQL gerados com sucesso na pasta 'sql/'!")
     except Exception as e:
